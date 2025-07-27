@@ -22,7 +22,6 @@
         .log-line.error { color: #bf616a; font-weight: bold; }
         .log-line.success { color: #a3be8c; }
         
-        /* --- CSS MỚI CHO BỘ LỌC --- */
         .filter-options { margin-bottom: 20px; padding: 10px; border: 1px solid #333; border-radius: 4px; display: flex; flex-wrap: wrap; gap: 15px; align-items: center; }
         .filter-options span { font-weight: bold; color: #aaa; margin-right: 10px; }
         .filter-options label { color: #ccc; cursor: pointer; }
@@ -33,6 +32,10 @@
         body.hide-no-signal .log-type-no-signal {
             display: none;
         }
+
+        /* --- CSS MỚI CHO CHẾ ĐỘ NGẮN GỌN --- */
+        .log-time { color: #666; margin-right: 8px; }
+        .log-level { margin-right: 8px; font-weight: bold; }
         /* --- KẾT THÚC CSS MỚI --- */
     </style>
 </head>
@@ -46,19 +49,12 @@
         
         <div class="filter-options">
             <span>Ẩn bớt logs INFO:</span>
-            <div>
-                <input type="checkbox" id="hideNewCandle" onchange="applyFilters()">
-                <label for="hideNewCandle">Nến mới đã đóng</label>
-            </div>
-            <div>
-                <input type="checkbox" id="hideNoPosition" onchange="applyFilters()">
-                <label for="hideNoPosition">Không có vị thế mở</label>
-            </div>
-            <div>
-                <input type="checkbox" id="hideNoSignal" onchange="applyFilters()">
-                <label for="hideNoSignal">Không có tín hiệu cơ bản</label>
-            </div>
+            <div><input type="checkbox" id="hideNewCandle" onchange="applyFilters()"><label for="hideNewCandle">Nến mới</label></div>
+            <div><input type="checkbox" id="hideNoPosition" onchange="applyFilters()"><label for="hideNoPosition">Không có vị thế</label></div>
+            <div><input type="checkbox" id="hideNoSignal" onchange="applyFilters()"><label for="hideNoSignal">Không có tín hiệu</label></div>
+            <div style="margin-left: auto;"><input type="checkbox" id="conciseModeCheckbox" onchange="toggleConciseMode()"><label for="conciseModeCheckbox">Chế độ ngắn gọn</label></div>
         </div>
+        
         <div class="tab-buttons" id="tabContainer"></div>
         <div id="logContainer"></div>
         <div class="status" id="statusText">Sẵn sàng...</div>
@@ -70,21 +66,39 @@
         const statusText = document.getElementById('statusText');
         const tabContainer = document.getElementById('tabContainer');
         let botConfig = [];
+        let currentRawLogText = ''; // Biến toàn cục để lưu trữ log thô
 
-        // --- JAVASCRIPT MỚI: Định nghĩa các bộ lọc ---
         const filters = {
             hideNewCandle: { element: document.getElementById('hideNewCandle'), bodyClass: 'hide-new-candle' },
             hideNoPosition: { element: document.getElementById('hideNoPosition'), bodyClass: 'hide-no-position' },
             hideNoSignal: { element: document.getElementById('hideNoSignal'), bodyClass: 'hide-no-signal' }
         };
+        
+        // --- JAVASCRIPT MỚI: Thêm checkbox chế độ ngắn gọn ---
+        const conciseModeCheckbox = document.getElementById('conciseModeCheckbox');
 
-        function initializeFilters() {
+        function initializeState() {
+            // Khởi tạo bộ lọc
             const savedFilters = JSON.parse(localStorage.getItem('logFilters')) || {};
             for (const key in filters) {
                 filters[key].element.checked = savedFilters[key] || false;
             }
             applyFilters();
+            
+            // Khởi tạo chế độ ngắn gọn
+            const isConcise = localStorage.getItem('conciseMode') === 'true';
+            conciseModeCheckbox.checked = isConcise;
+
+            // Tải URL
+            baseUrlInput.value = localStorage.getItem('logViewerBaseUrl') || '';
         }
+
+        function toggleConciseMode() {
+            const isChecked = conciseModeCheckbox.checked;
+            localStorage.setItem('conciseMode', isChecked);
+            displayLogs(); // Vẽ lại log với chế độ mới
+        }
+        // --- KẾT THÚC JAVASCRIPT MỚI ---
 
         function applyFilters() {
             const filtersToSave = {};
@@ -96,9 +110,7 @@
             localStorage.setItem('logFilters', JSON.stringify(filtersToSave));
         }
         
-        baseUrlInput.value = localStorage.getItem('logViewerBaseUrl') || '';
-        initializeFilters();
-        // --- KẾT THÚC JAVASCRIPT MỚI ---
+        initializeState();
 
         async function loadConfig() {
             let baseUrl = baseUrlInput.value.trim();
@@ -106,24 +118,18 @@
                 alert('Vui lòng nhập URL của thư mục logs.');
                 return;
             }
-            if (!baseUrl.endsWith('/')) {
-                baseUrl += '/';
-            }
+            if (!baseUrl.endsWith('/')) baseUrl += '/';
             localStorage.setItem('logViewerBaseUrl', baseUrl);
             statusText.textContent = 'Đang tải cấu hình...';
             tabContainer.innerHTML = '';
-
             try {
                 const configUrl = `${baseUrl}config.json?_=${new Date().getTime()}`;
                 const response = await fetch(configUrl);
                 if (!response.ok) throw new Error(`Không tìm thấy file config.json`);
-                
                 const config = await response.json();
                 botConfig = config.bots;
                 createTabs();
-                if (botConfig.length > 0) {
-                    switchTab(botConfig[0].file);
-                }
+                if (botConfig.length > 0) switchTab(botConfig[0].file);
             } catch (error) {
                 statusText.textContent = `Lỗi tải cấu hình: ${error.message}`;
             }
@@ -150,43 +156,54 @@
         async function fetchLogs(fileName) {
             const baseUrl = localStorage.getItem('logViewerBaseUrl');
             if (!baseUrl || !fileName) return;
-
             const fileUrl = `${baseUrl}${fileName}?_=${new Date().getTime()}`;
             logContainer.innerHTML = '';
             statusText.textContent = `Đang tải ${fileName}...`;
-
             try {
                 const response = await fetch(fileUrl);
                 if (!response.ok) throw new Error(`Lỗi mạng: ${response.status}`);
-                
-                const data = await response.text();
-                displayLogs(data);
-                statusText.textContent = `Đã tải xong ${fileName} | Cập nhật lần cuối: ${new Date().toLocaleTimeString()}`;
+                currentRawLogText = await response.text(); // Lưu log thô vào biến toàn cục
+                displayLogs(); // Hiển thị log
+                statusText.textContent = `Đã tải xong ${fileName} | Cập nhật: ${new Date().toLocaleTimeString()}`;
             } catch (error) {
                 logContainer.textContent = `Không thể tải file log. Lỗi: ${error.message}`;
                 statusText.textContent = 'Tải thất bại';
             }
         }
         
-        function displayLogs(logText) {
-            const lines = logText.split('\n');
+        // --- CẬP NHẬT HÀM DISPLAYLOGS ---
+        function displayLogs() {
+            const isConcise = conciseModeCheckbox.checked;
+            const lines = currentRawLogText.split('\n');
             let htmlContent = '';
-            lines.forEach(line => {
-                let className = '';
-                if (line.includes(' - INFO - ')) className = 'info';
-                if (line.includes(' - WARNING - ')) className = 'warning';
-                if (line.includes(' - ERROR - ')) className = 'error';
-                if (line.includes('✅') || line.includes('THÀNH CÔNG')) className = 'success';
 
-                // --- LOGIC GẮN THẺ MỚI ---
+            lines.forEach(line => {
+                let finalLine = line;
+                let baseClassName = '';
+                
+                if (line.includes(' - INFO - ')) baseClassName = 'info';
+                if (line.includes(' - WARNING - ')) baseClassName = 'warning';
+                if (line.includes(' - ERROR - ')) baseClassName = 'error';
+                if (line.includes('✅') || line.includes('THÀNH CÔNG')) baseClassName = 'success';
+
+                if (isConcise) {
+                    const match = line.match(/^\d{4}-\d{2}-\d{2}\s(\d{2}:\d{2}:\d{2}),\d{3}\s-\s(INFO|WARNING|ERROR)\s-\s(.*)/);
+                    if (match) {
+                        const time = match[1];
+                        const level = match[2];
+                        const message = match[3];
+                        finalLine = `<span class="log-time">${time}</span><span class="log-level">${level}</span><span>${message}</span>`;
+                    }
+                }
+
                 let logTypeClass = '';
                 if (line.includes('mới đã đóng')) logTypeClass = 'log-type-new-candle';
                 else if (line.includes('Không có vị thế mở')) logTypeClass = 'log-type-no-position';
                 else if (line.includes('không có tín hiệu cơ bản')) logTypeClass = 'log-type-no-signal';
-                // --- KẾT THÚC LOGIC GẮN THẺ MỚI ---
-
-                htmlContent += `<div class="log-line ${className} ${logTypeClass}">${line}</div>`;
+                
+                htmlContent += `<div class="log-line ${baseClassName} ${logTypeClass}">${finalLine}</div>`;
             });
+
             logContainer.innerHTML = htmlContent;
             logContainer.scrollTop = logContainer.scrollHeight;
         }
